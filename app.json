@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "janaru-app",
+    "name": "Janaru",
     "slug": "janaru-app",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -10,19 +10,36 @@
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#f5f0e7"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Janaru needs access to your microphone to record your voice notes.",
+        "NSCalendarsUsageDescription": "Janaru needs access to your calendar to schedule tasks."
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
-      }
+        "backgroundColor": "#f5f0e7"
+      },
+      "permissions": [
+        "RECORD_AUDIO",
+        "READ_CALENDAR",
+        "WRITE_CALENDAR"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Allow Janaru to access your microphone."
+        }
+      ]
+    ]
   }
 }
