@@ -65,63 +65,148 @@ class ClaudeApiService {
   /**
    * Mock implementation for testing without actual API calls
    */
-  public async mockProcessTranscript(transcript: string, recordingId: string): Promise<TaskResponse> {
-    // Simulate API processing delay
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    // Generate unique IDs using a more secure method
-    const generateSecureId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
-    
-    // Return mock data
-    return {
-      highPriorityTasks: [
+  // In src/services/claude-api-service.ts, update the mockProcessTranscript function:
+
+public async mockProcessTranscript(transcript: string, recordingId: string): Promise<TaskResponse> {
+  // Simulate API processing delay
+  await new Promise(resolve => setTimeout(resolve, 1500));
+  
+  // Generate unique IDs using a more secure method
+  const generateSecureId = (prefix: string) => `${prefix}_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+  
+  // Extract tasks from transcript (simplified text analysis)
+  const highPriorityTasks = [];
+  const mediumPriorityTasks = [];
+  
+  // Look for keywords in the transcript
+  const today = new Date();
+  const nextWeek = new Date(today);
+  nextWeek.setDate(today.getDate() + 7);
+  
+  // Format dates in YYYY-MM-DD format
+  const formatDate = (date) => {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+  
+  // Simple text analysis to extract tasks
+  // Tax related tasks
+  if (transcript.toLowerCase().includes('tax')) {
+    highPriorityTasks.push({
+      id: generateSecureId('task'),
+      title: 'File your taxes',
+      priority: 'high',
+      date: formatDate(today),
+      time: '18:00',
+      duration: 120, // 2 hours
+      completed: false,
+      recordingId
+    });
+  }
+  
+  // Vet/doctor related tasks
+  if (transcript.toLowerCase().includes('dog') && 
+     (transcript.toLowerCase().includes('vet') || transcript.toLowerCase().includes('doctor'))) {
+    highPriorityTasks.push({
+      id: generateSecureId('task'),
+      title: 'Take your dog to the vet',
+      priority: 'high',
+      date: formatDate(new Date(today.setDate(today.getDate() + 2))), // Two days from now
+      time: '18:00',
+      duration: 60, // 1 hour
+      completed: false,
+      recordingId
+    });
+  }
+  
+  // Driver's license
+  if (transcript.toLowerCase().includes('driver') && transcript.toLowerCase().includes('license')) {
+    highPriorityTasks.push({
+      id: generateSecureId('task'),
+      title: "Help with driver's license",
+      priority: 'high',
+      date: formatDate(new Date(today.setDate(today.getDate() + 5))), // Weekend
+      time: '10:00',
+      duration: 90, // 1.5 hours
+      completed: false,
+      recordingId
+    });
+  }
+  
+  // Yard waste
+  if (transcript.toLowerCase().includes('yard') || 
+      transcript.toLowerCase().includes('waste') || 
+      transcript.toLowerCase().includes('dispose')) {
+    mediumPriorityTasks.push({
+      id: generateSecureId('task'),
+      title: 'Dispose of yard waste',
+      priority: 'medium',
+      date: formatDate(nextWeek),
+      time: null,
+      duration: 60,
+      completed: false,
+      recordingId,
+      subTasks: [
         {
-          id: generateSecureId('task'),
-          title: 'File your taxes',
-          priority: 'high',
-          date: '2025-04-07',
-          time: '18:00',
-          duration: 120, // 2 hours
-          completed: false,
-          recordingId
+          id: generateSecureId('subtask'),
+          title: 'Research disposal options',
+          completed: false
         },
         {
-          id: generateSecureId('task'),
-          title: 'Take your dog to the doctor',
-          priority: 'high',
-          date: '2025-04-09',
-          time: '18:00',
-          duration: 60, // 1 hour
-          completed: false,
-          recordingId
-        }
-      ],
-      mediumPriorityTasks: [
-        {
-          id: generateSecureId('task'),
-          title: 'Dispose of cut trees/yard waste',
-          priority: 'medium',
-          date: null,
-          time: null,
-          duration: 120, // 2 hours
-          completed: false,
-          recordingId,
-          subTasks: [
-            {
-              id: generateSecureId('subtask'),
-              title: 'Research disposal options',
-              completed: false
-            },
-            {
-              id: generateSecureId('subtask'),
-              title: 'Schedule actual disposal',
-              completed: false
-            }
-          ]
+          id: generateSecureId('subtask'),
+          title: 'Schedule pickup or dropoff',
+          completed: false
         }
       ]
-    };
+    });
   }
+  
+  // Vacation planning
+  if (transcript.toLowerCase().includes('vacation') || 
+      transcript.toLowerCase().includes('burnt out') || 
+      transcript.toLowerCase().includes('burnout')) {
+    mediumPriorityTasks.push({
+      id: generateSecureId('task'),
+      title: 'Plan vacation for burnout recovery',
+      priority: 'medium',
+      date: formatDate(new Date(nextWeek.setDate(nextWeek.getDate() + 7))),
+      time: null,
+      duration: 120,
+      completed: false,
+      recordingId,
+      subTasks: [
+        {
+          id: generateSecureId('subtask'),
+          title: 'Research destinations',
+          completed: false
+        },
+        {
+          id: generateSecureId('subtask'),
+          title: 'Check available time off',
+          completed: false
+        }
+      ]
+    });
+  }
+  
+  // Add default tasks if nothing was extracted
+  if (highPriorityTasks.length === 0 && mediumPriorityTasks.length === 0) {
+    highPriorityTasks.push({
+      id: generateSecureId('task'),
+      title: 'Review your priorities',
+      priority: 'high',
+      date: formatDate(today),
+      time: '18:00',
+      duration: 30,
+      completed: false,
+      recordingId
+    });
+  }
+  
+  return {
+    highPriorityTasks,
+    mediumPriorityTasks
+  };
+}
 }
 
 // Export a singleton instance

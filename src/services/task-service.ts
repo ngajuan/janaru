@@ -65,6 +65,36 @@ class TaskService {
     }
   }
   
+  // Add this function to src/services/task-service.ts
+
+/**
+ * Update a task with Google Calendar event ID
+ */
+public async updateTaskWithCalendarEvent(taskId: string, calendarEventId: string): Promise<void> {
+  try {
+    // Find the task in high priority tasks
+    const highPriorityTask = this.highPriorityTasks.find(task => task.id === taskId);
+    if (highPriorityTask) {
+      highPriorityTask.calendarEventId = calendarEventId;
+      await this.saveTasks();
+      return;
+    }
+    
+    // Find the task in medium priority tasks
+    const mediumPriorityTask = this.mediumPriorityTasks.find(task => task.id === taskId);
+    if (mediumPriorityTask) {
+      mediumPriorityTask.calendarEventId = calendarEventId;
+      await this.saveTasks();
+      return;
+    }
+    
+    throw new Error('Task not found');
+  } catch (error) {
+    console.error('Failed to update task with calendar event', error);
+    throw error;
+  }
+}
+
   /**
    * Process a transcript to extract and prioritize tasks
    */
@@ -73,7 +103,11 @@ class TaskService {
       // Use the mock service for demo purposes
       const response = await claudeApiService.mockProcessTranscript(transcript, recordingId);
       
-      // Update local cache
+      // Remove any existing tasks for this recording to prevent duplicates
+      this.highPriorityTasks = this.highPriorityTasks.filter(task => task.recordingId !== recordingId);
+      this.mediumPriorityTasks = this.mediumPriorityTasks.filter(task => task.recordingId !== recordingId);
+      
+      // Add the new tasks
       this.highPriorityTasks = [...this.highPriorityTasks, ...response.highPriorityTasks];
       this.mediumPriorityTasks = [...this.mediumPriorityTasks, ...response.mediumPriorityTasks];
       
@@ -81,7 +115,6 @@ class TaskService {
       await this.saveTasks();
       
       return response;
-      
     } catch (error) {
       console.error('Failed to process transcript', error);
       throw new Error('Failed to extract tasks from transcript');

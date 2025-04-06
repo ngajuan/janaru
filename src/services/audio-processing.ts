@@ -1,46 +1,41 @@
 // src/services/audio-processing.ts
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
 import { useRef, useEffect, useState } from 'react';
 
 /**
  * Audio Recording Service - Hook for audio recording functionality
  */
 export function useAudioRecorder() {
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [recording, setRecording] = useState(null);
   const [isRecording, setIsRecording] = useState(false);
   const [duration, setDuration] = useState(0);
-  const [audioUri, setAudioUri] = useState<string | null>(null);
-  const [audioLevels, setAudioLevels] = useState<number[]>([]);
+  const [audioUri, setAudioUri] = useState(null);
+  const [audioLevels, setAudioLevels] = useState([]);
   
-  const durationTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const levelMonitorRef = useRef<NodeJS.Timeout | null>(null);
+  const durationTimerRef = useRef(null);
+  const levelMonitorRef = useRef(null);
   
   // Start recording function
   const startRecording = async () => {
     try {
       // Request permissions
-      const { granted } = await Audio.requestPermissionsAsync();
-      if (!granted) {
-        throw new Error('Audio recording permissions not granted');
-      }
+      console.log('Requesting permissions...');
+      await Audio.requestPermissionsAsync();
       
-      // Configure audio mode for voice recording quality
-      // Fix: Use the correct enum values from Audio
+      // Configure audio mode - using simplified version
+      console.log('Setting audio mode...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
-        staysActiveInBackground: false,
-        // Fix: Use the correct enum value
-        interruptionModeIOS: Audio.InterruptionModeIOS.DoNotMix,
-        interruptionModeAndroid: Audio.InterruptionModeAndroid.DoNotMix,
       });
       
       // Create and prepare the recording object
+      console.log('Creating recording...');
       const newRecording = new Audio.Recording();
       await newRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
       
       // Start the recording
+      console.log('Starting recording...');
       await newRecording.startAsync();
       setRecording(newRecording);
       setIsRecording(true);
@@ -53,7 +48,7 @@ export function useAudioRecorder() {
       }, 1000);
       
       // Start audio level monitoring (for visualization)
-      monitorAudioLevels();
+      startAudioLevelMonitoring();
       
     } catch (error) {
       console.error('Failed to start recording', error);
@@ -62,7 +57,7 @@ export function useAudioRecorder() {
   };
   
   // Function to monitor audio levels for visualization
-  const monitorAudioLevels = () => {
+  const startAudioLevelMonitoring = () => {
     // For demo, simulate audio levels
     levelMonitorRef.current = setInterval(() => {
       // Generate random audio levels between 10 and 90
@@ -142,7 +137,7 @@ export function useAudioRecorder() {
       }, 1000);
       
       // Resume audio level monitoring
-      monitorAudioLevels(recording);
+      startAudioLevelMonitoring();
       
       // Update state
       setIsRecording(true);
@@ -183,62 +178,76 @@ export function useAudioRecorder() {
 /**
  * Speech-to-Text Service - Hook for transcription functionality
  */
+// In src/services/audio-processing.ts, update the useSpeechToText function:
+
 export function useSpeechToText() {
-  const [transcript, setTranscript] = useState('');
-  const [isTranscribing, setIsTranscribing] = useState(false);
-  const [transcriptionError, setTranscriptionError] = useState<string | null>(null);
-  
-  // Start transcription process
-  const startTranscription = async (audioUri: string) => {
-    setIsTranscribing(true);
-    setTranscriptionError(null);
+    const [transcript, setTranscript] = useState('');
+    const [isTranscribing, setIsTranscribing] = useState(false);
+    const [transcriptionError, setTranscriptionError] = useState(null);
     
-    try {
-      // For demo purposes, simulate transcription with a timeout
-      // In production, replace with actual speech-to-text API call
+    // Start transcription process
+    const startTranscription = async (audioUri) => {
+      setIsTranscribing(true);
+      setTranscriptionError(null);
       
-      setTimeout(() => {
-        // Simulate successful transcription
-        const mockTranscript = "I am going to start talking about a lot of things. What I need you to do is make all of the things that I'm talking about actionable for me. And prioritize them accordingly. Starting now. So I need to do my taxes. I need to throw away the the small batches of batches of trees, my family and I cut up find somewhere to dispose of that. I need to go buy some clothes for next week. Plan some time for my vacation time as I need some time to get away and be alone, since I'm I'm feeling kind of burnt out from work. I need to help my mom get her driver's license. Need to take, my dog to a doctor etcetera. Find time for me based off my calendar of 6 pm edt.";
+      try {
+        console.log('Starting transcription for:', audioUri);
         
-        setTranscript(mockTranscript);
+        // Simulate a more realistic transcription experience
+        // In a real implementation, this would call a real speech-to-text API
+        
+        // Simulate progressive transcription (like it's analyzing parts of the audio)
+        const finalTranscript = "I need to file my taxes by Monday. I should take my dog to the vet on Wednesday. I also need to help my mom get her driver's license this weekend. I'm feeling burnt out from work and should plan a vacation soon. I need to dispose of some yard waste next week. Everything needs to be scheduled after 6 PM because of my work.";
+        
+        // Simulate progressive transcription
+        let partialTranscript = '';
+        const words = finalTranscript.split(' ');
+        
+        // Show words appearing gradually
+        for (let i = 0; i < words.length; i += 3) {
+          await new Promise(resolve => setTimeout(resolve, 300)); // Delay for realism
+          partialTranscript = words.slice(0, i + 3).join(' ');
+          setTranscript(partialTranscript);
+        }
+        
+        // Set the final transcript
+        setTranscript(finalTranscript);
         setIsTranscribing(false);
-      }, 2000);  // Simulate 2 second processing time
-      
-    } catch (error) {
-      console.error('Transcription failed', error);
-      setTranscriptionError((error as Error).message);
-      setIsTranscribing(false);
-    }
-  };
-  
-  // Function to edit transcript
-  const updateTranscript = (newText: string) => {
-    setTranscript(newText);
-  };
-  
-  return {
-    transcript,
-    isTranscribing,
-    transcriptionError,
-    startTranscription,
-    updateTranscript,
-  };
-}
+        
+      } catch (error) {
+        console.error('Transcription failed', error);
+        setTranscriptionError(error.message);
+        setIsTranscribing(false);
+      }
+    };
+    
+    // Function to edit transcript
+    const updateTranscript = (newText) => {
+      setTranscript(newText);
+    };
+    
+    return {
+      transcript,
+      isTranscribing,
+      transcriptionError,
+      startTranscription,
+      updateTranscript,
+    };
+  }
 
 /**
  * Audio Playback Service - Hook for audio playback functionality
  */
 export function useAudioPlayback() {
-  const [sound, setSound] = useState<Audio.Sound | null>(null);
+  const [sound, setSound] = useState(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playbackPosition, setPlaybackPosition] = useState(0);
   const [playbackDuration, setPlaybackDuration] = useState(0);
   
-  const positionTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const positionTimerRef = useRef(null);
   
   // Load sound from URI
-  const loadSound = async (audioUri: string) => {
+  const loadSound = async (audioUri) => {
     try {
       // Unload any existing sound
       if (sound) {
@@ -285,7 +294,7 @@ export function useAudioPlayback() {
             
             // If playback has finished
             if (status.didJustFinish) {
-              clearInterval(positionTimerRef.current!);
+              clearInterval(positionTimerRef.current);
               setIsPlaying(false);
               setPlaybackPosition(0);
             }

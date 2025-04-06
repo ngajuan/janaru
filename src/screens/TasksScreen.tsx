@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, Act
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { taskService } from '../services/task-service';
 import { recordingService } from '../services/recording-service';
+import { useAudioPlayback } from '../services/audio-processing';
 
 const TasksScreen = () => {
   const route = useRoute();
@@ -15,6 +16,10 @@ const TasksScreen = () => {
     completedTasks: [],
   });
   const [loading, setLoading] = useState(true);
+  const [recording, setRecording] = useState(null);
+  const [playingAudio, setPlayingAudio] = useState(false);
+  const { loadSound, playSound, pauseSound, isPlaying } = useAudioPlayback();
+  
   useEffect(() => {
     // Load tasks for this recording
     const loadTasks = async () => {
@@ -45,6 +50,31 @@ const TasksScreen = () => {
     
     loadTasks();
   }, [recordingId]);
+  
+  useEffect(() => {
+    if (recordingId) {
+      const rec = recordingService.getRecordingById(recordingId);
+      if (rec) {
+        setRecording(rec);
+      }
+    }
+  }, [recordingId]);
+  
+  const handlePlayRecording = async () => {
+    if (!recording) return;
+    
+    if (isPlaying) {
+      await pauseSound();
+      setPlayingAudio(false);
+    } else {
+      // If first time playing, load the sound
+      if (!playingAudio) {
+        await loadSound(recording.audioUri);
+        setPlayingAudio(true);
+      }
+      await playSound();
+    }
+  };
   
   const handleMarkAsComplete = async (taskId) => {
     try {
@@ -133,8 +163,16 @@ const TasksScreen = () => {
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity style={styles.recordingButton} onPress={() => navigation.navigate('Recording')}>
-          <Text style={styles.recordingButtonText}>Recording</Text>
+        <TouchableOpacity 
+          style={[
+            styles.recordingButton, 
+            isPlaying ? styles.recordingButtonActive : null
+          ]} 
+          onPress={handlePlayRecording}
+        >
+          <Text style={styles.recordingButtonText}>
+            {isPlaying ? 'Pause' : 'Play Recording'}
+          </Text>
         </TouchableOpacity>
       </View>
       
@@ -258,6 +296,10 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: '#005e46',
+  },
+  recordingButtonActive: {
+    backgroundColor: '#005e46',
+    borderColor: '#f5f0e7',
   },
   recordingButtonText: {
     fontSize: 14,
