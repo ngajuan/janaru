@@ -1,9 +1,22 @@
+// src/screens/TasksScreen.tsx
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, ActivityIndicator } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  TouchableOpacity, 
+  SafeAreaView, 
+  ScrollView, 
+  ActivityIndicator,
+  Alert,
+  Platform 
+} from 'react-native';
 import { useRoute, useNavigation } from '@react-navigation/native';
 import { taskService } from '../services/task-service';
 import { recordingService } from '../services/recording-service';
+import { googleCalendarService } from '../services/google-calendar-service';
 import { useAudioPlayback } from '../services/audio-processing';
+import { logger } from '../config';
 
 const TasksScreen = () => {
   const route = useRoute();
@@ -16,41 +29,17 @@ const TasksScreen = () => {
     completedTasks: [],
   });
   const [loading, setLoading] = useState(true);
+  const [processingTaskId, setProcessingTaskId] = useState(null);
   const [recording, setRecording] = useState(null);
   const [playingAudio, setPlayingAudio] = useState(false);
   const { loadSound, playSound, pauseSound, isPlaying } = useAudioPlayback();
   
+  // Load tasks when screen mounts or when recordingId changes
   useEffect(() => {
-    // Load tasks for this recording
-    const loadTasks = async () => {
-      setLoading(true);
-      
-      try {
-        if (recordingId) {
-          // In a real implementation, we'd get tasks by recording ID
-          // For demo, use mock data and process transcript
-          const recording = recordingService.getRecordingById(recordingId);
-          
-          if (recording && recording.transcript) {
-            // Process the transcript to extract tasks
-            await taskService.processTranscript(recording.transcript, recordingId);
-          }
-        }
-        
-        // Get all tasks
-        const allTasks = taskService.getAllTasks();
-        setTasks(allTasks);
-        
-      } catch (error) {
-        console.error('Failed to load tasks', error);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
     loadTasks();
   }, [recordingId]);
   
+  // Load recording info
   useEffect(() => {
     if (recordingId) {
       const rec = recordingService.getRecordingById(recordingId);
@@ -60,47 +49,170 @@ const TasksScreen = () => {
     }
   }, [recordingId]);
   
+  // Load tasks - either all tasks or tasks for specific recording
+  const loadTasks = async () => {
+    setLoading(true);
+    
+    try {
+      // Get recording if specified
+      if (recordingId) {
+        const recording = recordingService.getRecordingById(recordingId);
+        
+        if (recording && recording.transcript) {
+          // Check if recording is already processed
+          if (!recording.processed) {
+            // Process the transcript to extract tasks
+            await taskService.processTranscript(recording.transcript, recordingId);
+            
+            // Mark recording as processed
+            await recordingService.markRecordingAsProcessed(recordingId);
+          }
+          
+          // Get tasks for this recording
+          const recordingTasks = taskService.getTasksByRecordingId(recordingId);
+          setTasks(recordingTasks);
+        } else {
+          // No transcript or recording not found
+          setTasks({
+            highPriorityTasks: [],
+            mediumPriorityTasks: [],
+            completedTasks: [],
+          });
+        }
+      } else {
+        // Get all tasks if no recordingId specified
+        const allTasks = taskService.getAllTasks();
+        setTasks(allTasks);
+      }
+    } catch (error) {
+      logger.error('Failed to load tasks', error);
+      Alert.alert(
+        'Error Loading Tasks',
+        'Something went wrong while loading your tasks. Please try again.'
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+  
+  // Handle playing recording audio
   const handlePlayRecording = async () => {
     if (!recording) return;
     
-    if (isPlaying) {
-      await pauseSound();
-      setPlayingAudio(false);
-    } else {
-      // If first time playing, load the sound
-      if (!playingAudio) {
-        await loadSound(recording.audioUri);
-        setPlayingAudio(true);
+    try {
+      if (isPlaying) {
+        await pauseSound();
+      } else {
+        // If first time playing, load the sound
+        if (!playingAudio) {
+          const success = await loadSound(recording.audioUri);
+          if (success) {
+            setPlayingAudio(true);
+          } else {
+            throw new Error('Failed to load audio');
+          }
+        }
+        await playSound();
       }
-      await playSound();
+    } catch (error) {
+      logger.error('Error playing recording', error);
+      Alert.alert(
+        'Playback Error',
+        'Could not play the recording. The file may be missing or corrupted.'
+      );
     }
   };
   
+  // Mark task as complete
   const handleMarkAsComplete = async (taskId) => {
     try {
+      setProcessingTaskId(taskId);
       await taskService.markTaskAsCompleted(taskId);
       
       // Refresh tasks
-      const allTasks = taskService.getAllTasks();
-      setTasks(allTasks);
-      
+      if (recordingId) {
+        const recordingTasks = taskService.getTasksByRecordingId(recordingId);
+        setTasks(recordingTasks);
+      } else {
+        const allTasks = taskService.getAllTasks();
+        setTasks(allTasks);
+      }
     } catch (error) {
-      console.error('Failed to mark task as completed', error);
+      logger.error('Failed to mark task as completed', error);
+      Alert.alert(
+        'Error',
+        'Failed to mark task as completed. Please try again.'
+      );
+    } finally {
+      setProcessingTaskId(null);
     }
   };
   
+  // Add task to Google Calendar
   const handlePushToCalendar = async (taskId) => {
-    // For demo purposes, just mark the task as having a calendar event
     try {
-      const mockEventId = `evt_${Date.now()}_${Math.floor(Math.random() * 10000)}`;
-      await taskService.updateTaskWithCalendarEvent(taskId, mockEventId);
+      setProcessingTaskId(taskId);
       
-      // Refresh tasks
-      const allTasks = taskService.getAllTasks();
-      setTasks(allTasks);
+      // Check if Google is connected
+      const isGoogleConnected = await googleCalendarService.isSignedIn();
       
+      if (!isGoogleConnected) {
+        // Ask user to connect to Google
+        Alert.alert(
+          'Google Calendar Not Connected',
+          'Would you like to connect to Google Calendar now?',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { 
+              text: 'Connect', 
+              onPress: async () => {
+                const success = await googleCalendarService.signIn();
+                if (success) {
+                  // Try again after successful sign-in
+                  handlePushToCalendar(taskId);
+                } else {
+                  Alert.alert(
+                    'Connection Failed',
+                    'Could not connect to Google Calendar. Please try again in Settings.'
+                  );
+                }
+              }
+            }
+          ]
+        );
+        setProcessingTaskId(null);
+        return;
+      }
+      
+      // Add task to calendar
+      const calendarEventId = await taskService.addTaskToCalendar(taskId);
+      
+      if (calendarEventId) {
+        // Refresh tasks
+        if (recordingId) {
+          const recordingTasks = taskService.getTasksByRecordingId(recordingId);
+          setTasks(recordingTasks);
+        } else {
+          const allTasks = taskService.getAllTasks();
+          setTasks(allTasks);
+        }
+        
+        // Show success message
+        Alert.alert(
+          'Success',
+          'Task has been added to your Google Calendar.'
+        );
+      } else {
+        throw new Error('Failed to create calendar event');
+      }
     } catch (error) {
-      console.error('Failed to push task to calendar', error);
+      logger.error('Failed to push task to calendar', error);
+      Alert.alert(
+        'Calendar Error',
+        'Failed to add task to calendar. Please try again.'
+      );
+    } finally {
+      setProcessingTaskId(null);
     }
   };
   
@@ -139,6 +251,7 @@ const TasksScreen = () => {
     }
   };
   
+  // Loading state
   if (loading) {
     return (
       <SafeAreaView style={styles.container}>
@@ -163,17 +276,22 @@ const TasksScreen = () => {
           <Text style={styles.backButton}>← Back</Text>
         </TouchableOpacity>
         
-        <TouchableOpacity 
-          style={[
-            styles.recordingButton, 
-            isPlaying ? styles.recordingButtonActive : null
-          ]} 
-          onPress={handlePlayRecording}
-        >
-          <Text style={styles.recordingButtonText}>
-            {isPlaying ? 'Pause' : 'Play Recording'}
-          </Text>
-        </TouchableOpacity>
+        {recording && (
+          <TouchableOpacity 
+            style={[
+              styles.recordingButton, 
+              isPlaying ? styles.recordingButtonActive : null
+            ]} 
+            onPress={handlePlayRecording}
+          >
+            <Text style={[
+              styles.recordingButtonText,
+              isPlaying ? styles.recordingButtonTextActive : null
+            ]}>
+              {isPlaying ? 'Pause' : 'Play Recording'}
+            </Text>
+          </TouchableOpacity>
+        )}
       </View>
       
       <ScrollView style={styles.content}>
@@ -206,8 +324,15 @@ const TasksScreen = () => {
                   )}
                 </View>
                 
-                {task.calendarEventId ? (
-                  <TouchableOpacity style={styles.completedButton}>
+                {processingTaskId === task.id ? (
+                  <View style={styles.buttonContainer}>
+                    <ActivityIndicator size="small" color="#005e46" />
+                  </View>
+                ) : task.calendarEventId ? (
+                  <TouchableOpacity 
+                    style={styles.completedButton}
+                    onPress={() => handleMarkAsComplete(task.id)}
+                  >
                     <Text style={styles.completedButtonText}>✓</Text>
                   </TouchableOpacity>
                 ) : (
@@ -252,8 +377,15 @@ const TasksScreen = () => {
                   )}
                 </View>
                 
-                {task.calendarEventId ? (
-                  <TouchableOpacity style={styles.completedButton}>
+                {processingTaskId === task.id ? (
+                  <View style={styles.buttonContainer}>
+                    <ActivityIndicator size="small" color="#005e46" />
+                  </View>
+                ) : task.calendarEventId ? (
+                  <TouchableOpacity 
+                    style={styles.completedButton}
+                    onPress={() => handleMarkAsComplete(task.id)}
+                  >
                     <Text style={styles.completedButtonText}>✓</Text>
                   </TouchableOpacity>
                 ) : (
@@ -268,6 +400,31 @@ const TasksScreen = () => {
             ))
           )}
         </View>
+        
+        {/* Completed Tasks Section */}
+        {tasks.completedTasks.length > 0 && (
+          <View style={styles.sectionContainer}>
+            <Text style={styles.sectionTitle}>Completed Tasks</Text>
+            
+            {tasks.completedTasks.map(task => (
+              <View key={task.id} style={[styles.taskCard, styles.taskCardCompleted]}>
+                <View style={styles.taskContent}>
+                  <Text style={[styles.taskTitle, styles.taskTitleCompleted]}>
+                    {task.title}
+                  </Text>
+                  <Text style={styles.taskDateTime}>
+                    {task.date ? `${formatDate(task.date)}` : ''}
+                    {task.time ? ` at ${formatTime(task.time)}` : ''}
+                  </Text>
+                </View>
+                
+                <View style={styles.completedTag}>
+                  <Text style={styles.completedTagText}>Done</Text>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
       </ScrollView>
     </SafeAreaView>
   );
@@ -299,11 +456,13 @@ const styles = StyleSheet.create({
   },
   recordingButtonActive: {
     backgroundColor: '#005e46',
-    borderColor: '#f5f0e7',
   },
   recordingButtonText: {
     fontSize: 14,
     color: '#005e46',
+  },
+  recordingButtonTextActive: {
+    color: '#FFFFFF',
   },
   loadingContainer: {
     flex: 1,
@@ -341,6 +500,22 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     overflow: 'hidden',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.1,
+        shadowRadius: 4,
+      },
+      android: {
+        elevation: 2,
+      },
+    }),
+  },
+  taskCardCompleted: {
+    backgroundColor: '#f0f0f0',
+    borderLeftWidth: 4,
+    borderLeftColor: '#005e46',
   },
   taskContent: {
     flex: 1,
@@ -351,6 +526,10 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#333333',
     marginBottom: 4,
+  },
+  taskTitleCompleted: {
+    textDecorationLine: 'line-through',
+    color: '#666666',
   },
   taskDateTime: {
     fontSize: 14,
@@ -364,6 +543,10 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#666666',
     marginBottom: 2,
+  },
+  buttonContainer: {
+    padding: 16,
+    marginRight: 8,
   },
   pushButton: {
     backgroundColor: '#005e46',
@@ -388,6 +571,18 @@ const styles = StyleSheet.create({
   },
   completedButtonText: {
     fontSize: 16,
+    color: '#FFFFFF',
+    fontWeight: 'bold',
+  },
+  completedTag: {
+    backgroundColor: '#005e46',
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 20,
+    marginRight: 16,
+  },
+  completedTagText: {
+    fontSize: 12,
     color: '#FFFFFF',
     fontWeight: 'bold',
   },

@@ -1,6 +1,9 @@
 // src/services/audio-processing.ts
 import { Audio } from 'expo-av';
 import { useRef, useEffect, useState } from 'react';
+import * as FileSystem from 'expo-file-system';
+import axios from 'axios';
+import { ENV, SecureKeyStorage, SECURE_STORAGE_KEYS } from '../config';
 
 /**
  * Audio Recording Service - Hook for audio recording functionality
@@ -20,19 +23,50 @@ export function useAudioRecorder() {
     try {
       // Request permissions
       console.log('Requesting permissions...');
-      await Audio.requestPermissionsAsync();
+      const { granted } = await Audio.requestPermissionsAsync();
       
-      // Configure audio mode - using simplified version
+      if (!granted) {
+        console.error('Audio recording permissions not granted');
+        throw new Error('Microphone permissions required');
+      }
+      
+      // Configure audio mode
       console.log('Setting audio mode...');
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
+        shouldDuckAndroid: true,
+        playThroughEarpieceAndroid: false,
       });
       
       // Create and prepare the recording object
       console.log('Creating recording...');
       const newRecording = new Audio.Recording();
-      await newRecording.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await newRecording.prepareToRecordAsync({
+        android: {
+          extension: '.m4a',
+          outputFormat: Audio.AndroidOutputFormat.MPEG_4,
+          audioEncoder: Audio.AndroidAudioEncoder.AAC,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+        },
+        ios: {
+          extension: '.m4a',
+          outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+          audioQuality: Audio.IOSAudioQuality.MEDIUM,
+          sampleRate: 44100,
+          numberOfChannels: 1,
+          bitRate: 128000,
+          linearPCMBitDepth: 16,
+          linearPCMIsBigEndian: false,
+          linearPCMIsFloat: false,
+        },
+        web: {
+          mimeType: 'audio/webm',
+          bitsPerSecond: 128000,
+        },
+      });
       
       // Start the recording
       console.log('Starting recording...');
@@ -48,17 +82,39 @@ export function useAudioRecorder() {
       }, 1000);
       
       // Start audio level monitoring (for visualization)
-      startAudioLevelMonitoring();
+      if (newRecording.getStatusAsync) {
+        startAudioLevelMonitoring(newRecording);
+      } else {
+        // Fallback to simulated audio levels
+        startSimulatedAudioLevelMonitoring();
+      }
       
     } catch (error) {
       console.error('Failed to start recording', error);
-      // Handle error - show user a notification
+      throw error;
     }
   };
   
-  // Function to monitor audio levels for visualization
-  const startAudioLevelMonitoring = () => {
-    // For demo, simulate audio levels
+  // Function to monitor real audio levels for visualization
+  const startAudioLevelMonitoring = (rec) => {
+    levelMonitorRef.current = setInterval(async () => {
+      try {
+        const status = await rec.getStatusAsync();
+        if (status.isRecording) {
+          // On some devices/platforms, metering is available
+          const level = status.metering ? status.metering * 100 : Math.floor(Math.random() * 80) + 10;
+          setAudioLevels(prev => [...prev, level].slice(-50)); // Keep last 50 samples
+        }
+      } catch (error) {
+        console.warn('Error monitoring audio levels, switching to simulation', error);
+        clearInterval(levelMonitorRef.current);
+        startSimulatedAudioLevelMonitoring();
+      }
+    }, 100); // Sample every 100ms
+  };
+  
+  // Simulated audio levels for visualization
+  const startSimulatedAudioLevelMonitoring = () => {
     levelMonitorRef.current = setInterval(() => {
       // Generate random audio levels between 10 and 90
       const randomLevel = Math.floor(Math.random() * 80) + 10;
@@ -68,7 +124,7 @@ export function useAudioRecorder() {
   
   // Stop recording function
   const stopRecording = async () => {
-    if (!recording) return;
+    if (!recording) return null;
     
     try {
       // Stop the recording
@@ -76,25 +132,41 @@ export function useAudioRecorder() {
       
       // Get the recorded URI
       const uri = recording.getURI();
-      if (uri) {
-        setAudioUri(uri);
-      }
       
       // Clear timers
       if (durationTimerRef.current) {
         clearInterval(durationTimerRef.current);
-      }
-      if (levelMonitorRef.current) {
-        clearInterval(levelMonitorRef.current);
+        durationTimerRef.current = null;
       }
       
-      // Reset recording state
-      setIsRecording(false);
-      setRecording(null);
+      if (levelMonitorRef.current) {
+        clearInterval(levelMonitorRef.current);
+        levelMonitorRef.current = null;
+      }
+      
+      // Get file info
+      if (uri) {
+        const fileInfo = await FileSystem.getInfoAsync(uri);
+        setAudioUri(uri);
+        
+        // Reset recording state
+        setIsRecording(false);
+        setRecording(null);
+        
+        return {
+          uri,
+          duration,
+          size: fileInfo.size || 0,
+        };
+      }
+      
+      throw new Error('Recording failed - no audio file created');
       
     } catch (error) {
       console.error('Failed to stop recording', error);
-      // Handle error - show user a notification
+      setIsRecording(false);
+      setRecording(null);
+      throw error;
     }
   };
   
@@ -120,7 +192,7 @@ export function useAudioRecorder() {
       
     } catch (error) {
       console.error('Failed to pause recording', error);
-      // Handle error
+      throw error;
     }
   };
   
@@ -137,14 +209,18 @@ export function useAudioRecorder() {
       }, 1000);
       
       // Resume audio level monitoring
-      startAudioLevelMonitoring();
+      if (recording.getStatusAsync) {
+        startAudioLevelMonitoring(recording);
+      } else {
+        startSimulatedAudioLevelMonitoring();
+      }
       
       // Update state
       setIsRecording(true);
       
     } catch (error) {
       console.error('Failed to resume recording', error);
-      // Handle error
+      throw error;
     }
   };
   
@@ -178,62 +254,135 @@ export function useAudioRecorder() {
 /**
  * Speech-to-Text Service - Hook for transcription functionality
  */
-// In src/services/audio-processing.ts, update the useSpeechToText function:
-
 export function useSpeechToText() {
-    const [transcript, setTranscript] = useState('');
-    const [isTranscribing, setIsTranscribing] = useState(false);
-    const [transcriptionError, setTranscriptionError] = useState(null);
-    
-    // Start transcription process
-    const startTranscription = async (audioUri) => {
-      setIsTranscribing(true);
-      setTranscriptionError(null);
-      
-      try {
-        console.log('Starting transcription for:', audioUri);
-        
-        // Simulate a more realistic transcription experience
-        // In a real implementation, this would call a real speech-to-text API
-        
-        // Simulate progressive transcription (like it's analyzing parts of the audio)
-        const finalTranscript = "I need to file my taxes by Monday. I should take my dog to the vet on Wednesday. I also need to help my mom get her driver's license this weekend. I'm feeling burnt out from work and should plan a vacation soon. I need to dispose of some yard waste next week. Everything needs to be scheduled after 6 PM because of my work.";
-        
-        // Simulate progressive transcription
-        let partialTranscript = '';
-        const words = finalTranscript.split(' ');
-        
-        // Show words appearing gradually
-        for (let i = 0; i < words.length; i += 3) {
-          await new Promise(resolve => setTimeout(resolve, 300)); // Delay for realism
-          partialTranscript = words.slice(0, i + 3).join(' ');
-          setTranscript(partialTranscript);
-        }
-        
-        // Set the final transcript
-        setTranscript(finalTranscript);
-        setIsTranscribing(false);
-        
-      } catch (error) {
-        console.error('Transcription failed', error);
-        setTranscriptionError(error.message);
-        setIsTranscribing(false);
+  const [transcript, setTranscript] = useState('');
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcriptionError, setTranscriptionError] = useState(null);
+  const [progressPercentage, setProgressPercentage] = useState(0);
+  
+  // Whisper API transcription
+  const transcribeWithWhisperAPI = async (audioUri) => {
+    try {
+      // Get API key from secure storage (using your OpenAI key)
+      const apiKey = await SecureKeyStorage.getKey(SECURE_STORAGE_KEYS.OPENAI_API_KEY);
+      if (!apiKey) {
+        throw new Error('OpenAI API key not found for transcription');
       }
-    };
+      
+      // Create form data with the audio file
+      const formData = new FormData();
+      formData.append('file', {
+        uri: audioUri,
+        name: 'recording.m4a',
+        type: 'audio/m4a',
+      });
+      formData.append('model', 'whisper-1');
+      formData.append('language', 'en');
+      formData.append('response_format', 'json');
+      
+      // Send to Whisper API
+      setProgressPercentage(30);
+      const response = await axios.post(
+        'https://api.openai.com/v1/audio/transcriptions',
+        formData,
+        {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+        }
+      );
+      
+      setProgressPercentage(90);
+      
+      if (response.data && response.data.text) {
+        return response.data.text;
+      } else {
+        throw new Error('Transcription failed - no text returned');
+      }
+      
+    } catch (error) {
+      console.error('Whisper API transcription failed', error);
+      throw error;
+    }
+  };
+  
+  // Simulate transcription (for demo/development)
+  const simulateTranscription = async () => {
+    const finalTranscript = "I need to file my taxes by Monday. I should take my dog to the vet on Wednesday. I also need to help my mom get her driver's license this weekend. I'm feeling burnt out from work and should plan a vacation soon. I need to dispose of some yard waste next week. Everything needs to be scheduled after 6 PM because of my work.";
     
-    // Function to edit transcript
-    const updateTranscript = (newText) => {
-      setTranscript(newText);
-    };
+    // Simulate progressive transcription
+    let partialTranscript = '';
+    const words = finalTranscript.split(' ');
     
-    return {
-      transcript,
-      isTranscribing,
-      transcriptionError,
-      startTranscription,
-      updateTranscript,
-    };
-  }
+    // Progress updates
+    const totalSteps = words.length / 3;
+    let currentStep = 0;
+    
+    // Show words appearing gradually
+    for (let i = 0; i < words.length; i += 3) {
+      await new Promise(resolve => setTimeout(resolve, 200)); // Delay for realism
+      partialTranscript = words.slice(0, i + 3).join(' ');
+      setTranscript(partialTranscript);
+      
+      // Update progress
+      currentStep++;
+      setProgressPercentage(Math.min(90, (currentStep / totalSteps) * 90));
+    }
+    
+    return finalTranscript;
+  };
+  
+  // Start transcription process
+  const startTranscription = async (audioUri) => {
+    setIsTranscribing(true);
+    setTranscriptionError(null);
+    setProgressPercentage(0);
+    
+    try {
+      console.log('Starting transcription for:', audioUri);
+      
+      let transcriptionText;
+      
+      // Check environment and audio file existence
+      if (ENV.ENVIRONMENT === 'production' && audioUri && !audioUri.startsWith('file:///mock/')) {
+        // Use real Whisper API
+        transcriptionText = await transcribeWithWhisperAPI(audioUri);
+      } else {
+        // Use simulated transcription for development or mock audio
+        console.log('Using simulated transcription');
+        transcriptionText = await simulateTranscription();
+      }
+      
+      // Set the final transcript
+      setTranscript(transcriptionText);
+      setProgressPercentage(100);
+      setIsTranscribing(false);
+      
+      return transcriptionText;
+      
+    } catch (error) {
+      console.error('Transcription failed', error);
+      setTranscriptionError(error.message);
+      setIsTranscribing(false);
+      throw error;
+    }
+  };
+  
+  // Function to edit transcript
+  const updateTranscript = (newText) => {
+    setTranscript(newText);
+  };
+  
+  return {
+    transcript,
+    isTranscribing,
+    transcriptionError,
+    progressPercentage,
+    startTranscription,
+    updateTranscript,
+  };
+}
 
 /**
  * Audio Playback Service - Hook for audio playback functionality
@@ -254,7 +403,61 @@ export function useAudioPlayback() {
         await sound.unloadAsync();
       }
       
-      // Load the audio file
+      // Check if this is a mock URI
+      if (audioUri.startsWith('file:///mock/')) {
+        setPlaybackDuration(30000); // Mock 30 second duration
+        setPlaybackPosition(0);
+        
+        // Create a dummy sound object for mock URIs
+        const dummySound = {
+          async playAsync() {
+            setIsPlaying(true);
+            
+            // Simulate playback position updates
+            positionTimerRef.current = setInterval(() => {
+              setPlaybackPosition((prev) => {
+                const newPos = prev + 100;
+                if (newPos >= 30000) {
+                  clearInterval(positionTimerRef.current);
+                  setIsPlaying(false);
+                  return 0;
+                }
+                return newPos;
+              });
+            }, 100);
+            
+            return { isPlaying: true };
+          },
+          async pauseAsync() {
+            setIsPlaying(false);
+            if (positionTimerRef.current) {
+              clearInterval(positionTimerRef.current);
+            }
+            return { isPlaying: false };
+          },
+          async getStatusAsync() {
+            return {
+              isLoaded: true,
+              positionMillis: playbackPosition,
+              durationMillis: 30000,
+              isPlaying: isPlaying,
+              didJustFinish: playbackPosition >= 30000,
+            };
+          },
+          async unloadAsync() {
+            if (positionTimerRef.current) {
+              clearInterval(positionTimerRef.current);
+            }
+            setPlaybackPosition(0);
+            setIsPlaying(false);
+          },
+        };
+        
+        setSound(dummySound);
+        return true;
+      }
+      
+      // Load the audio file for real URIs
       const { sound: newSound } = await Audio.Sound.createAsync(
         { uri: audioUri },
         { shouldPlay: false }
@@ -285,7 +488,7 @@ export function useAudioPlayback() {
       await sound.playAsync();
       setIsPlaying(true);
       
-      // Start position tracking
+      // Start position tracking for real sounds
       positionTimerRef.current = setInterval(async () => {
         if (sound) {
           const status = await sound.getStatusAsync();
